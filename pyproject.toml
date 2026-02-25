@@ -11,6 +11,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[tool.setuptools.packages.find]
+exclude = ["baml_src*", "baml_client*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
