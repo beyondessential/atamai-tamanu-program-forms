@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# BAML - auto-generated, do not commit
+baml_client/
+
+# Environment
+.env
+
+# Streamlit
+.streamlit/secrets.toml
