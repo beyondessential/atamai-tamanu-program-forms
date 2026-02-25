@@ -25,7 +25,7 @@ All codes except question codes are **enforced by the generator** — the AI-pro
 |---|---|---|
 | `programCode` | `_flat_lower(programName)` — lowercase, strip all non-alphanumeric | `"NCD Screening"` → `ncdscreening` |
 | Survey `code` | `_flat_lower(surveyName)` — same rule | `"NCD Screening"` → `ncdscreening` |
-| Question `code` | `{programCode}` + 3-digit incrementing number — **AI-generated, not enforced** | `ncdscreening001`, `ncdscreening002` |
+| Question `code` | `{surveyCode}` + 3-digit incrementing number, reset per survey — **AI-generated, not enforced** | `ncdscreening001`, `ncdscreening002` |
 | `registryCode` | `_flat_lower(registryName)` | `"NCD Registry"` → `ncdregistry` |
 | Clinical status `code` | `{registryCode}-{_flat_lower(statusName)}` | `ncdregistry-active`, `ncdregistry-losttofollowup` |
 | Condition `code` | `{registryCode}-{_flat_lower(conditionName)}` | `ncdregistry-type2diabetes` |
@@ -60,10 +60,10 @@ One row per survey follows.
 | `name` | **Yes** | — | Must exactly match the corresponding sheet name (punctuation stripped for matching). |
 | `surveyType` | **Yes** | — | See [Survey Types](#survey-types) |
 | `status` | No | `draft` | `publish` · `draft` · `hidden` |
-| `isSensitive` | **Yes** | — | `yes` or `no`. Cannot be `yes` for vitals or charting surveys. |
+| `isSensitive` | **Yes** | — | Boolean (`TRUE`/`FALSE`). Cannot be `TRUE` for vitals or charting surveys. |
 | `visibilityStatus` | No | `current` | `current` · `historical`. Setting `historical` marks the survey as deleted. |
-| `notifiable` | No | `false` | `yes` to enable notifiable disease reporting. |
-| `notifyEmailAddresses` | No | `[]` | Comma- or newline-separated email addresses. Only used when `notifiable` is `yes`. |
+| `notifiable` | No | `FALSE` | Boolean (`TRUE`/`FALSE`). Set to `TRUE` to enable notifiable disease reporting. |
+| `notifyEmailAddresses` | No | `[]` | Comma- or newline-separated email addresses. Only used when `notifiable` is `TRUE`. |
 
 **Status import behaviour:**
 - `publish` — imported to all servers
@@ -80,7 +80,7 @@ Rows without a `code` value are skipped.
 
 | Column | Required | Default | Notes |
 |---|---|---|---|
-| `code` | **Yes** | — | `{programCode}` + 3-digit incrementing number e.g. `ncdscreening001`. Generates `pde-{code}` internally. |
+| `code` | **Yes** | — | `{surveyCode}` + 3-digit incrementing number, reset per survey e.g. `ncdscreening001`. Generates `pde-{code}` internally. |
 | `type` | **Yes** | — | See [Question Types](#question-types) |
 | `name` | No | — | Internal display name; convention is to match `code`. |
 | `text` | No | — | Label shown to the user. |
@@ -266,7 +266,7 @@ programName    Diabetes Screening
 country        FJ
 
 code                    name                surveyType  status  isSensitive
-diabetesscreening       Diabetes Screening  programs    draft   no
+diabetesscreening       Diabetes Screening  programs    draft   FALSE
 ```
 
 **Diabetes Screening sheet:**

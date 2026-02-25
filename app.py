@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("Tamanu Program Form Builder")
-st.caption("Describe the survey you need and I'll help you build it.")
+st.caption("Describe the program form you need and I'll help you build it.")
 
 # ── Session state ─────────────────────────────────────────────────────────────
 

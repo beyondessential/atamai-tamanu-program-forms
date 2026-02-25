@@ -3,8 +3,8 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
 class SurveyQuestion {
-  // Prefixed with programCode + 3-digit incrementing number.
-  // e.g. programCode "ncdscreening" → "ncdscreening001", "ncdscreening002"
+  // Prefixed with surveyCode + 3-digit incrementing number.
+  // e.g. surveyCode "ncdscreening" → "ncdscreening001", "ncdscreening002"
   // Becomes pde-{code} internally in Tamanu.
   code string
 
@@ -308,7 +308,7 @@ function ProcessMessage(conversation_history: string) -> ConversationResponse {
     XLSX file. Be concise — ask one question or a small related group at a time.
 
     Gather before generating:
-    - Program name, short code, and country (optional)
+    - Program name and country (optional)
     - For each survey: name, purpose, and questions (text, type, options if select/radio,
       mandatory flag, conditional logic, new screen boundaries)
     - Whether the program includes a patient registry. If yes:
@@ -322,6 +322,9 @@ function ProcessMessage(conversation_history: string) -> ConversationResponse {
     - Before finishing: confirm whether any survey contains sensitive patient data
       (e.g. mental health, HIV) and whether it records notifiable diseases requiring
       email alerts (if so, which addresses)
+
+    When referencing codes (program code, survey code, question codes, registry code, etc.)
+    always present them in lowercase as they appear in the XLSX, e.g. "ncdscreening" not "NCDSCREENING".
 
     When ready, set ready_to_generate to true and summarise what you are about to generate.
 
@@ -344,7 +347,7 @@ function BuildSurveyDefinition(conversation_history: string) -> ProgramDefinitio
     Code naming rules (applied consistently across all sheets):
     - program_code: lowercase, no separators, from program name. e.g. "NCD Screening" → "ncdscreening"
     - survey code: lowercase, no separators, from survey name. e.g. "NCD Screening" → "ncdscreening"
-    - question code: programCode + 3-digit incrementing number. e.g. "ncdscreening001", "ncdscreening002"
+    - question code: surveyCode + 3-digit incrementing number, reset per survey. e.g. surveyCode "ncdscreening" → "ncdscreening001", "ncdscreening002"
     - question.name: same as code
     - registry_code: lowercase, no separators, from registry name. e.g. "NCD Registry" → "ncdregistry"
     - clinical status code: registryCode + "-" + lowercase name no spaces. e.g. "ncdregistry-active"

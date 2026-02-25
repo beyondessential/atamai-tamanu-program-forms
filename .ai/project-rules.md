@@ -26,18 +26,19 @@ These rules are critical. Invalid output will fail silently or cause import erro
 - Must be named exactly `Metadata`
 - Key-value rows (programCode, programName, country) must come before the survey table
 - The survey table header row must start with `code` or `name` — the importer scans for this to detect the header
-- Valid `surveyType` values: `programs`, `vitals`, `referral`, `simpleChart`, `complexChart`, `complexChartCore`
+- Valid `surveyType` values: `programs`, `vitals`, `referral`, `simpleChart`, `complexChart`, `complexChartCore`, `obsolete`
 - Valid `status` values: `publish`, `draft`, `hidden`
 
 ### Survey question sheets
 - Sheet name must exactly match `SurveyMetadata.name` — not the code
 - `newScreen` column must use the string `"yes"` or empty string — not `True`/`False`/`1`/`0`
-- `type` column must use Tamanu's string literals exactly: `FreeText`, `Number`, `Select`, `Radio`, `MultiSelect`, `Binary`, `Checkbox`, `Date`, `DateTime`, `Autocomplete`, `Instruction`, `CalculatedQuestion`, `PatientData`, `UserData`, `Photo`, `Geolocate`, `Result`, `ConditionQuestion`, `PatientIssue`, `SurveyLink`, `SurveyAnswer`, `SurveyResult`, `SubmissionDate`
+- `type` column must use Tamanu's string literals exactly: `FreeText`, `Multiline`, `Number`, `Select`, `Radio`, `MultiSelect`, `Binary`, `Checkbox`, `Date`, `DateTime`, `Autocomplete`, `Instruction`, `CalculatedQuestion`, `PatientData`, `UserData`, `Photo`, `Geolocate`, `Result`, `ConditionQuestion`, `PatientIssue`, `SurveyLink`, `SurveyAnswer`, `SurveyResult`, `SubmissionDate`, `ComplexChartInstanceName`, `ComplexChartDate`, `ComplexChartType`, `ComplexChartSubtype`
 - `visibilityCriteria` and `validationCriteria` must be valid JSON strings or empty — never Python dicts serialised with `str()`
-- Code naming conventions (enforced via the AI prompt):
+- `isSensitive` and `notifiable` must be boolean (`TRUE`/`FALSE`) — not `yes`/`no` strings (Yup boolean schema rejects `yes`/`no`)
+- Code naming conventions (all enforced by the generator except question codes which are AI-generated):
   - `programCode`: lowercase no separators from program name — `ncdscreening`
   - Survey `code`: lowercase no separators from survey name — `ncdscreening`
-  - Question `code`: programCode + 3-digit incrementing number — `ncdscreening001`
+  - Question `code`: surveyCode + 3-digit incrementing number, reset per survey — `ncdscreening001`
   - Registry `registryCode`: lowercase no separators from registry name — `ncdregistry`
   - Clinical status `code`: registryCode + `-` + lowercase name no spaces — `ncdregistry-active`
   - Condition `code`: registryCode + `-` + lowercase name no spaces — `ncdregistry-type2diabetes`

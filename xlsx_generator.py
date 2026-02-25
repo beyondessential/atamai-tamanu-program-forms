@@ -85,9 +85,9 @@ def _build_metadata_sheet(wb: openpyxl.Workbook, program: ProgramDefinition) -> 
             survey.name,
             _enum_str(survey.survey_type),
             _enum_str(survey.status),
-            "yes" if survey.is_sensitive else "no",
-            _enum_str(survey.visibility_status) if survey.visibility_status else "",
-            "yes" if survey.notifiable else "",
+            bool(survey.is_sensitive),
+            _enum_str(survey.visibility_status) if survey.visibility_status else "current",
+            bool(survey.notifiable),
             survey.notify_email_addresses or "",
         ])
 
@@ -111,7 +111,7 @@ def _question_to_row(q: SurveyQuestion) -> list:
         q.validation_criteria or "",
         q.calculation or "",
         q.config or "",
-        _enum_str(q.visibility_status) if q.visibility_status else "",
+        _enum_str(q.visibility_status) if q.visibility_status else "current",
     ]
 
 
@@ -152,7 +152,7 @@ def _build_registry_sheet(wb: openpyxl.Workbook, registry: ProgramRegistry) -> N
             f"{registry_code}-{_flat_lower(status.name)}",
             status.name,
             _enum_str(status.color),
-            _enum_str(status.visibility_status) if status.visibility_status else "",
+            _enum_str(status.visibility_status) if status.visibility_status else "current",
         ])
 
     for col in ws.columns:
@@ -168,7 +168,7 @@ def _build_registry_conditions_sheet(wb: openpyxl.Workbook, registry: ProgramReg
         ws.append([
             f"{registry_code}-{_flat_lower(condition.name)}",
             condition.name,
-            _enum_str(condition.visibility_status) if condition.visibility_status else "",
+            _enum_str(condition.visibility_status) if condition.visibility_status else "current",
         ])
 
     for col in ws.columns:
@@ -183,7 +183,7 @@ def _build_registry_condition_categories_sheet(wb: openpyxl.Workbook, registry: 
         ws.append([
             _flat_lower(category.name),
             category.name,
-            _enum_str(category.visibility_status) if category.visibility_status else "",
+            _enum_str(category.visibility_status) if category.visibility_status else "current",
         ])
 
     for col in ws.columns:
