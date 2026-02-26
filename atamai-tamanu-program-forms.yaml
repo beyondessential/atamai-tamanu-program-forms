@@ -1,16 +1,10 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: atamai-tamanu-program-forms
-
----
-apiVersion: v1
 kind: Secret
 metadata:
   name: app-secrets
-  namespace: atamai-tamanu-program-forms
+  namespace: tinker
 type: Opaque
-# Populate with: kubectl create secret generic app-secrets --from-env-file=.env -n atamai-tamanu-program-forms
+# Populate with: kubectl create secret generic app-secrets --from-env-file=.env -n tinker
 # Or base64-encode values and add them here:
 # data:
 #   ANTHROPIC_API_KEY: <base64-encoded-value>
@@ -20,7 +14,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: atamai-tamanu-program-forms
-  namespace: atamai-tamanu-program-forms
+  namespace: tinker
   labels:
     app: atamai-tamanu-program-forms
 spec:
@@ -35,8 +29,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: atamai-tamanu-program-forms:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/beyondessential/atamai-tamanu-program-forms:main
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           envFrom:
@@ -67,7 +61,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: atamai-tamanu-program-forms
-  namespace: atamai-tamanu-program-forms
+  namespace: tinker
 spec:
   selector:
     app: atamai-tamanu-program-forms

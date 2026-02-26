@@ -31,23 +31,29 @@ App runs at http://localhost:8080
 
 ## Kubernetes
 
-```bash
-# 1. Build the image
-docker build -t atamai-tamanu-program-forms:latest .
+The image is built and pushed to `ghcr.io/beyondessential/atamai-tamanu-program-forms` automatically by GitHub Actions on every push to `main`.
 
-# 2. Create the secret from your .env file
+To deploy manually:
+
+```bash
+# 1. Create the secret from your .env file (first time only)
 kubectl create secret generic app-secrets \
   --from-env-file=.env \
-  -n atamai-tamanu-program-forms
+  -n tinker
 
-# 3. Apply the manifest
-kubectl apply -f k8s.yaml
+# 2. Apply the manifest
+kubectl apply -f atamai-tamanu-program-forms.yaml
 ```
 
-The app will be available inside the cluster at `http://atamai-tamanu-program-forms.atamai-tamanu-program-forms.svc.cluster.local`.
+The app will be available inside the cluster at `http://atamai-tamanu-program-forms.tinker.svc.cluster.local`.
 
-To expose it externally, either change the `Service` type to `LoadBalancer` in [k8s.yaml](k8s.yaml),
-or add an `Ingress` resource pointing at the service on port 80.
+To access it locally, use port-forward:
+
+```bash
+kubectl port-forward svc/atamai-tamanu-program-forms 8080:80 -n tinker
+```
+
+Then open http://localhost:8080.
 
 ## Switching LLM provider
 
