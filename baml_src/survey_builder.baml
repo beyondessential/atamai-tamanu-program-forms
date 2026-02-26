@@ -294,6 +294,29 @@ enum SurveyStatus {
 
 // ── Functions ────────────────────────────────────────────────────────────────
 
+// Interprets an uploaded image (paper form, screenshot, whiteboard, etc.) and extracts
+// enough detail to pre-fill a Tamanu program form conversation.
+function InterpretFormImage(image: image) -> string {
+  client DefaultClient
+  prompt #"
+    Examine this image — it may be a paper form, whiteboard diagram, screenshot,
+    or photograph related to a clinical program form.
+
+    Extract and describe in detail:
+    - All field names and question labels
+    - Input types where apparent (text, number, date, yes/no, dropdown, checkbox, etc.)
+    - Option lists for multi-choice fields
+    - Section headings and page/screen boundaries
+    - Any conditional logic or branching visible
+    - Any notes about mandatory fields or sensitive data
+
+    Format your response as a structured plain-text description
+    that can be used to build a Tamanu program form.
+
+    {{ image }}
+  "#
+}
+
 // Handles each turn of the conversation.
 // Asks clarifying questions until enough information is gathered,
 // then signals that we are ready to generate.
@@ -322,6 +345,18 @@ function ProcessMessage(conversation_history: string) -> ConversationResponse {
     - Before finishing: confirm whether any survey contains sensitive patient data
       (e.g. mental health, HIV) and whether it records notifiable diseases requiring
       email alerts (if so, which addresses)
+
+    If the conversation starts with [EXISTING PROGRAM LOADED], an existing XLSX has been
+    uploaded. Briefly confirm the program name and surveys loaded, then ask what changes
+    the user wants to make. Do not re-ask for information already present.
+
+    If the conversation starts with [FORM IMAGE INTERPRETED], a form image has been
+    analysed. Use the extracted description to pre-fill program details, confirm with
+    the user, and ask for anything missing before generating.
+
+    If the conversation starts with [PDF DOCUMENT LOADED], a PDF document has been
+    uploaded (e.g. a program specification or data dictionary). Use the content to
+    pre-fill program details, confirm with the user, and ask for anything missing.
 
     When referencing codes (program code, survey code, question codes, registry code, etc.)
     always present them in lowercase as they appear in the XLSX, e.g. "ncdscreening" not "NCDSCREENING".

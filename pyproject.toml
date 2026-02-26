@@ -9,6 +9,7 @@ dependencies = [
     "baml-py==0.216.0",
     "openpyxl>=3.1.0",
     "python-dotenv>=1.0.0",
+    "pypdf>=4.0.0",
 ]
 
 [tool.setuptools.packages.find]
