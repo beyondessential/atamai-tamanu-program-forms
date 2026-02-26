@@ -36,24 +36,23 @@ The image is built and pushed to `ghcr.io/beyondessential/atamai-tamanu-program-
 To deploy manually:
 
 ```bash
-# 1. Create the secret from your .env file (first time only)
+# 1. Create a GitHub PAT with read:packages scope, then create the image pull secret (first time only)
+kubectl create secret docker-registry ghcr-credentials \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GITHUB_PAT \
+  -n tinker
+
+# 2. Create the app secret from your .env file (first time only)
 kubectl create secret generic app-secrets \
   --from-env-file=.env \
   -n tinker
 
-# 2. Apply the manifest
+# 3. Apply the manifest
 kubectl apply -f atamai-tamanu-program-forms.yaml
 ```
 
-The app will be available inside the cluster at `http://atamai-tamanu-program-forms.tinker.svc.cluster.local`.
-
-To access it locally, use port-forward:
-
-```bash
-kubectl port-forward svc/atamai-tamanu-program-forms 8080:80 -n tinker
-```
-
-Then open http://localhost:8080.
+The app will be available on the Tailscale network at `http://tinker-atamai-tamanu-program-forms`.
 
 ## Switching LLM provider
 

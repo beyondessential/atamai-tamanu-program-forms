@@ -27,6 +27,8 @@ spec:
       labels:
         app: atamai-tamanu-program-forms
     spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
       containers:
         - name: app
           image: ghcr.io/beyondessential/atamai-tamanu-program-forms:main
@@ -62,6 +64,9 @@ kind: Service
 metadata:
   name: atamai-tamanu-program-forms
   namespace: tinker
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/tags: "tag:k8s,tag:tools"
 spec:
   selector:
     app: atamai-tamanu-program-forms
