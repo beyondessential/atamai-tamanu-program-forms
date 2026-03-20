@@ -1,6 +1,6 @@
 """
 Parses a Tamanu program importer XLSX into a text summary for the AI assistant,
-and validates it for common import errors.
+a structured program_data dict for round-trip generation, and validation errors.
 """
 
 import json
@@ -66,10 +66,14 @@ def _is_valid_json(value: str) -> bool:
         return False
 
 
-def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
+def parse_xlsx(data: bytes) -> tuple[str, dict | None, list[str]]:
     """
-    Parse a Tamanu program importer XLSX into a text summary plus validation errors.
-    Returns (summary, errors). summary is empty string if the file cannot be opened.
+    Parse a Tamanu program importer XLSX.
+
+    Returns (summary, program_data, errors):
+    - summary: text for the AI conversation context; empty string on failure
+    - program_data: structured dict for round-trip generation; None on failure
+    - errors: list of validation error strings
     """
     errors: list[str] = []
     lines: list[str] = []
@@ -77,12 +81,12 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
     try:
         wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
     except Exception as e:
-        return "", [f"Could not open file: {e}"]
+        return "", None, [f"Could not open file: {e}"]
 
     # ── Metadata ──────────────────────────────────────────────────────────────
 
     if "Metadata" not in wb.sheetnames:
-        return "", ["Missing required sheet: Metadata"]
+        return "", None, ["Missing required sheet: Metadata"]
 
     ws_meta = wb["Metadata"]
     kv, header_row = _parse_kv_rows(ws_meta)
@@ -123,6 +127,8 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
 
     # ── Survey sheets ──────────────────────────────────────────────────────────
 
+    program_surveys: list[dict] = []
+
     lines.append("Surveys:")
     for s in surveys:
         s_name = s.get("name", "")
@@ -142,15 +148,23 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
 
         lines.append(f"\n{s_name} ({s_code}) — {', '.join(meta_parts)}")
 
-        if s_name not in wb.sheetnames:
+        # Mirror Tamanu's importSurvey.js lookup:
+        # workbook.Sheets[sheetName.replace(/['"]/g, '')] || workbook.Sheets[code]
+        s_name_clean = s_name.replace("'", "").replace('"', "")
+        if s_name_clean in wb.sheetnames:
+            ws_survey = wb[s_name_clean]
+        elif s_code and s_code in wb.sheetnames:
+            ws_survey = wb[s_code]
+        else:
             errors.append(f"Missing sheet for survey '{s_name}'")
             lines.append("  (sheet not found)")
+            program_surveys.append({**s, "questions": []})
             continue
 
-        ws_survey = wb[s_name]
         all_rows = list(ws_survey.iter_rows(min_row=1))
         if not all_rows:
             lines.append("  (empty sheet)")
+            program_surveys.append({**s, "questions": []})
             continue
 
         headers = [_cell_str(c.value) for c in all_rows[0]]
@@ -179,17 +193,35 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
             text = q.get("text", "") or q.get("name", "")
             if text:
                 desc += f" — {text}"
+            if q.get("newScreen") == "yes":
+                desc += " [new screen]"
             if q.get("options"):
                 desc += f" [options: {q['options']}]"
+            if q.get("optionLabels"):
+                desc += f" [labels: {q['optionLabels']}]"
+            if q.get("detail"):
+                desc += f" [detail: {q['detail']}]"
             if q.get("validationCriteria"):
                 desc += f" [validation: {q['validationCriteria']}]"
             if q.get("visibilityCriteria"):
                 desc += f" [visible when: {q['visibilityCriteria']}]"
-            if q.get("newScreen") == "yes":
-                desc += " [new screen]"
+            if q.get("calculation"):
+                desc += f" [calculation: {q['calculation']}]"
+            if q.get("config"):
+                desc += f" [config: {q['config']}]"
+            if q.get("indicator"):
+                desc += f" [indicator: {q['indicator']}]"
+            if q.get("visibilityStatus") and q.get("visibilityStatus") != "current":
+                desc += f" [visibilityStatus: {q['visibilityStatus']}]"
+            if q.get("visualisationConfig"):
+                desc += f" [visualisationConfig: {q['visualisationConfig']}]"
             lines.append(desc)
 
+        program_surveys.append({**s, "questions": questions})
+
     # ── Registry ───────────────────────────────────────────────────────────────
+
+    registry_data: dict | None = None
 
     if "Registry" in wb.sheetnames:
         ws_reg = wb["Registry"]
@@ -198,6 +230,8 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
         reg_name = reg_kv.get("registryName", "")
         currently_at = reg_kv.get("currentlyAtType", "")
         lines.append(f"\nRegistry: {reg_name} ({reg_code}) — tracked at: {currently_at}")
+
+        statuses = []
         if reg_header_row:
             statuses = _parse_table(ws_reg, reg_header_row)
             if statuses:
@@ -206,22 +240,49 @@ def parse_xlsx(data: bytes) -> tuple[str, list[str]]:
                 )
                 lines.append(f"  Clinical statuses: {status_list}")
 
-    if "Registry Conditions" in wb.sheetnames:
+        conditions = []
+        if "Registry Conditions" in wb.sheetnames:
+            ws_cond = wb["Registry Conditions"]
+            _, cond_header = _parse_kv_rows(ws_cond)
+            if cond_header:
+                conditions = _parse_table(ws_cond, cond_header)
+                if conditions:
+                    cond_list = ", ".join(r.get("name", "") for r in conditions if r.get("name"))
+                    lines.append(f"  Conditions: {cond_list}")
+
+        condition_categories = []
+        if "Registry Condition Categories" in wb.sheetnames:
+            ws_cat = wb["Registry Condition Categories"]
+            _, cat_header = _parse_kv_rows(ws_cat)
+            if cat_header:
+                condition_categories = _parse_table(ws_cat, cat_header)
+                if condition_categories:
+                    cat_list = ", ".join(r.get("name", "") for r in condition_categories if r.get("name"))
+                    lines.append(f"  Condition categories: {cat_list}")
+
+        registry_data = {
+            "kv": reg_kv,
+            "statuses": statuses,
+            "conditions": conditions,
+            "condition_categories": condition_categories,
+        }
+
+    elif "Registry Conditions" in wb.sheetnames:
         ws_cond = wb["Registry Conditions"]
         _, cond_header = _parse_kv_rows(ws_cond)
+        conditions = []
         if cond_header:
-            cond_rows = _parse_table(ws_cond, cond_header)
-            if cond_rows:
-                cond_list = ", ".join(r.get("name", "") for r in cond_rows if r.get("name"))
-                lines.append(f"  Conditions: {cond_list}")
+            conditions = _parse_table(ws_cond, cond_header)
+            if conditions:
+                cond_list = ", ".join(r.get("name", "") for r in conditions if r.get("name"))
+                lines.append(f"\nRegistry Conditions: {cond_list}")
 
-    if "Registry Condition Categories" in wb.sheetnames:
-        ws_cat = wb["Registry Condition Categories"]
-        _, cat_header = _parse_kv_rows(ws_cat)
-        if cat_header:
-            cat_rows = _parse_table(ws_cat, cat_header)
-            if cat_rows:
-                cat_list = ", ".join(r.get("name", "") for r in cat_rows if r.get("name"))
-                lines.append(f"  Condition categories: {cat_list}")
+    program_data: dict = {
+        "program_code": program_code,
+        "program_name": program_name,
+        "country": country,
+        "surveys": program_surveys,
+        "registry": registry_data,
+    }
 
-    return "\n".join(lines), errors
+    return "\n".join(lines), program_data, errors

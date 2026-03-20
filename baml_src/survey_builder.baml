@@ -179,8 +179,95 @@ class ConversationResponse {
   // Message to display to the user
   message string
 
-  // True when enough information has been gathered to generate the survey
+  // True when enough information has been gathered to generate the importable program XLSX
   ready_to_generate bool
+
+  // True when the user asks for a human-readable questions export (not for Tamanu import)
+  // e.g. "show me the questions", "export questions for review", "give me a spreadsheet"
+  ready_to_export bool
+}
+
+// ── Delta update types ────────────────────────────────────────────────────────
+
+// A single question to add or modify in an existing survey.
+// Used by BuildProgramUpdate — the AI outputs only changed questions, not all of them.
+class SurveyQuestionUpsert {
+  // Full question data as it should appear in the final file
+  question SurveyQuestion
+
+  // For new questions only: insert after this question code.
+  // Omit to append at the end of the survey.
+  insert_after string?
+}
+
+// Changes to apply to one survey in an existing program XLSX.
+class SurveyUpdate {
+  // Must match the existing survey sheet name exactly
+  survey_name string
+
+  // Must match the existing survey code exactly (used as question code prefix)
+  survey_code string
+
+  // Questions to add or modify. Provide full question data for each.
+  upserts SurveyQuestionUpsert[]?
+
+  // Codes of questions to remove from this survey
+  question_codes_to_delete string[]?
+}
+
+// Delta output from BuildProgramUpdate — only the changed surveys.
+// Python merges this with the original parsed data.
+class ProgramDefinitionUpdate {
+  // One entry per survey being changed; unmodified surveys are omitted
+  survey_updates SurveyUpdate[]?
+}
+
+// ── Batched generation types ──────────────────────────────────────────────────
+
+// Metadata for one survey in the plan (no question content).
+class SurveyPlanEntry {
+  // Lowercase, no separators, from survey name
+  survey_code string
+
+  // Full display name, e.g. "NCD Screening"
+  survey_name string
+
+  // Survey type — almost always "programs"
+  survey_type SurveyType
+
+  // Workflow status
+  status SurveyStatus
+
+  // Exact number of questions this survey will have
+  total_questions int
+
+  // Whether this survey contains sensitive patient data
+  is_sensitive bool?
+
+  // Whether this survey triggers notifiable disease reporting
+  notifiable bool?
+
+  // Comma-separated email addresses for notifiable disease alerts
+  notify_email_addresses string?
+}
+
+// Plan output — program metadata plus question counts per survey.
+// Question content is NOT included; it is generated per-batch by BuildProgramQuestionsRange.
+class ProgramCollectionPlan {
+  // Lowercase, no separators, from program name
+  program_code string
+
+  // Full display name, e.g. "NCD Screening"
+  program_name string
+
+  // Optional ISO country code, e.g. "FJ"
+  country string?
+
+  // One entry per survey (metadata only, no questions)
+  surveys SurveyPlanEntry[]
+
+  // Optional patient registry — full definition
+  registry ProgramRegistry?
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -347,8 +434,8 @@ function ProcessMessage(conversation_history: string) -> ConversationResponse {
       email alerts (if so, which addresses)
 
     If the conversation starts with [EXISTING PROGRAM LOADED], an existing XLSX has been
-    uploaded. Briefly confirm the program name and surveys loaded, then ask what changes
-    the user wants to make. Do not re-ask for information already present.
+    uploaded. List ALL surveys loaded (name, type, number of questions), then ask what
+    changes the user wants to make. Do not re-ask for information already present.
 
     If the conversation starts with [FORM IMAGE INTERPRETED], a form image has been
     analysed. Use the extracted description to pre-fill program details, confirm with
@@ -361,7 +448,12 @@ function ProcessMessage(conversation_history: string) -> ConversationResponse {
     When referencing codes (program code, survey code, question codes, registry code, etc.)
     always present them in lowercase as they appear in the XLSX, e.g. "ncdscreening" not "NCDSCREENING".
 
-    When ready, set ready_to_generate to true and summarise what you are about to generate.
+    If the user asks to "show me the questions", "export questions for review",
+    "give me a spreadsheet of questions", or similar — set ready_to_export to true.
+    This produces a human-readable Excel (not a Tamanu import file).
+
+    When ready to generate the importable Tamanu XLSX, set ready_to_generate to true
+    and summarise what you are about to generate.
 
     Conversation so far:
     {{ conversation_history }}
@@ -394,6 +486,7 @@ function BuildSurveyDefinition(conversation_history: string) -> ProgramDefinitio
     - For Select/Radio/MultiSelect: always provide the options field
     - For mandatory questions: set validation_criteria to {"mandatory":true}
     - For number questions with a range: {"mandatory":true,"min":X,"max":Y}
+    - For number questions with a normal/reference range: add "normalRange":{"min":X,"max":Y} (valid on Number, CalculatedQuestion, Result)
     - For visibility_criteria use this JSON format:
       {"_conjunction":"and","conditions":[{"_type":"answer","questionId":"pde-QUESTION-CODE","_value":"VALUE","_comparison":"="}]}
     - survey_type should be "programs" unless there is a specific reason otherwise
@@ -406,8 +499,161 @@ function BuildSurveyDefinition(conversation_history: string) -> ProgramDefinitio
       - conditions: list all diseases/conditions the registry tracks
       - condition_categories: omit unless the implementer needs custom categories beyond the defaults
 
+    When the conversation starts with [EXISTING PROGRAM LOADED], you MUST include ALL
+    surveys and their questions from the loaded program summary in your output — not just
+    the ones explicitly discussed. Apply only the changes the user requested on top of the
+    existing content. Do not drop or omit any survey or question that was in the original.
+
     Conversation:
     {{ conversation_history }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// ── Pass 1 of N: plan ─────────────────────────────────────────────────────────
+// Returns program/survey metadata and exact question counts — no question content.
+// Question content is generated in batches by BuildProgramQuestionsRange.
+function BuildProgramPlan(conversation_history: string) -> ProgramCollectionPlan {
+  client DefaultClient
+  prompt #"
+    Plan the complete Tamanu program structure from the conversation.
+    Output program/survey metadata and exact question counts ONLY.
+    Do NOT output any question content.
+
+    Code naming rules:
+    - program_code: lowercase, no separators, from program name. e.g. "NCD Screening" → "ncdscreening"
+    - survey_code: lowercase, no separators, from survey name. e.g. "NCD Screening" → "ncdscreening"
+    - survey_type: "programs" unless specified otherwise
+    - status: "draft" unless the implementer confirmed production-ready
+
+    For each survey, set total_questions to the EXACT count of all questions needed.
+    Count every question individually: data fields, instruction text, calculated questions,
+    date/number/select fields — everything mentioned in the conversation.
+    Do not round; do not estimate. If you are unsure, count every field you intend to generate.
+    Include a registry definition (with full ProgramRegistry data) if the program uses one.
+
+    Conversation:
+    {{ conversation_history }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// ── Pass 2 of N: ranged question generation ───────────────────────────────────
+// Generates full question details for a specific numbered range within one survey.
+// Python controls the exact range so the AI never has to enumerate the full list.
+function BuildProgramQuestionsRange(
+  conversation_history: string,
+  survey_code: string,
+  survey_name: string,
+  range_description: string,
+  previous_batch_summary: string,
+) -> SurveyQuestion[] {
+  client DefaultClient
+  prompt #"
+    Generate a specific batch of questions for the Tamanu survey "{{ survey_name }}"
+    (survey code: {{ survey_code }}).
+
+    Batch: {{ range_description }}
+
+    {{ previous_batch_summary }}
+
+    Code naming rules:
+    - question code: survey_code + 3-digit number as specified in the batch description
+      e.g. survey_code "ncdscreening" + number 1 → "ncdscreening001"
+    - question.name: same as code
+
+    For each question in this batch:
+    - code, type, name, text: required
+    - new_screen: true for first question of each new screen/section
+    - options: for Select, Radio, MultiSelect — comma-separated values e.g. "Yes,No,Unknown"
+    - option_labels: only if display labels differ from option values
+    - detail: help text if any
+    - validation_criteria: JSON string e.g. {"mandatory":true} or {"mandatory":true,"min":0,"max":300}
+    - visibility_criteria: JSON string with pde- prefixed questionIds:
+      {"_conjunction":"and","conditions":[{"_type":"answer","questionId":"pde-QUESTION-CODE","_value":"Yes","_comparison":"="}]}
+    - calculation: for CalculatedQuestion, referencing pde-{code} question IDs
+    - config: JSON string for type-specific configuration
+    - visibility_status: omit unless removing a previously imported question
+    Leave fields null if not applicable.
+
+    Conversation (survey context):
+    {{ conversation_history }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// ── Delta update: generate only changes ───────────────────────────────────────
+// Called instead of BuildProgramPlan when an existing XLSX was uploaded.
+// Python merges the delta with the original data — unchanged questions are NOT output here.
+function BuildProgramUpdate(conversation_history: string) -> ProgramDefinitionUpdate {
+  client DefaultClient
+  prompt #"
+    You are applying changes to an existing Tamanu program XLSX.
+    The original program is described at the start of the conversation
+    (lines beginning with [EXISTING PROGRAM LOADED]).
+
+    Output ONLY the surveys and questions that need to be added or modified.
+    Do NOT reproduce surveys or questions that are unchanged — Python preserves them automatically.
+
+    For each survey being changed:
+    - upserts: list every question to add (new code) or modify (existing code).
+      Provide the full question data as it should appear in the final file.
+      For new questions, set insert_after to the code of the question it follows
+      (omit to append at the end of the survey).
+    - question_codes_to_delete: list codes of questions to remove.
+
+    Code naming rules:
+    - survey_name: must match the existing sheet name exactly
+    - survey_code: lowercase, no separators, matching the existing code
+    - For modified questions: keep the original code unchanged
+    - For new questions: survey_code + next available 3-digit number
+    - question.name: same as code
+    - visibility_criteria JSON format:
+      {"_conjunction":"and","conditions":[{"_type":"answer","questionId":"pde-QUESTION-CODE","_value":"VALUE","_comparison":"="}]}
+    - validation_criteria JSON format: {"mandatory":true} or {"mandatory":true,"min":0,"max":300}
+
+    Conversation:
+    {{ conversation_history }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// ── Post-generation error fixer ───────────────────────────────────────────────
+// Called automatically when validate_program_data() finds issues after generation.
+// Returns only the delta needed to fix the listed errors — unchanged questions
+// are NOT reproduced; Python merges them via apply_program_update.
+function FixProgramErrors(
+  program_summary: string,
+  errors: string,
+) -> ProgramDefinitionUpdate {
+  client DefaultClient
+  prompt #"
+    You are fixing validation errors in a Tamanu program form.
+
+    Output ONLY the questions that need to change to fix the listed errors.
+    Do NOT reproduce unchanged questions — Python preserves them automatically.
+
+    CRITICAL: NEVER change a question's type when fixing errors. Fix only the specific
+    field mentioned in the error while keeping the original type intact.
+
+    How to fix each error type:
+    - "Binary/Checkbox: options field is set" → clear the options field; keep the type
+    - "Select/Radio/MultiSelect: no options defined" → add comma-separated options; keep the type
+    - "CalculatedQuestion: no calculation formula" → add the formula; keep type as CalculatedQuestion
+    - "visibilityCriteria is not valid JSON" → fix the JSON or clear the field
+    - "validationCriteria is not valid JSON" → fix the JSON or clear the field
+    - "config is not valid JSON" → fix the JSON or clear the field
+    - "duplicate question code" → rename the second occurrence to the next available number
+
+    Current program state:
+    {{ program_summary }}
+
+    Errors to fix:
+    {{ errors }}
 
     {{ ctx.output_format }}
   "#

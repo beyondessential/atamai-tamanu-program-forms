@@ -191,6 +191,115 @@ def _build_registry_condition_categories_sheet(wb: openpyxl.Workbook, registry: 
         ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
 
 
+def _to_excel_bool(value) -> bool:
+    """Normalise a value (bool, 'true', 'false', 'yes', etc.) to a Python bool for Excel."""
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("true", "yes", "1")
+
+
+def generate_xlsx_from_program_data(program_data: dict) -> bytes:
+    """
+    Convert a program_data dict (from xlsx_parser or plan+batch generation)
+    into XLSX bytes ready for Tamanu import.
+
+    This is the dict-based counterpart to generate_xlsx(). It is used for:
+    - Exporting programs built via the batch generation path
+    - Exporting programs modified via the delta update path
+    """
+    wb = openpyxl.Workbook()
+    ws_meta = wb.active
+    ws_meta.title = "Metadata"
+
+    # Key-value rows at the top
+    ws_meta.append(["programCode", program_data.get("program_code", "")])
+    ws_meta.append(["programName", program_data.get("program_name", "")])
+    if program_data.get("country"):
+        ws_meta.append(["country", program_data["country"]])
+    ws_meta.append([])
+
+    # Survey table
+    survey_columns = ["code", "name", "surveyType", "status", "isSensitive", "visibilityStatus", "notifiable", "notifyEmailAddresses"]
+    _write_header_row(ws_meta, survey_columns)
+
+    for survey in program_data.get("surveys", []):
+        ws_meta.append([
+            survey.get("code", ""),
+            survey.get("name", ""),
+            survey.get("surveyType", "programs"),
+            survey.get("status", "draft"),
+            _to_excel_bool(survey.get("isSensitive", False)),
+            survey.get("visibilityStatus", "current"),
+            _to_excel_bool(survey.get("notifiable", False)),
+            survey.get("notifyEmailAddresses", ""),
+        ])
+
+    for col in ws_meta.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+        ws_meta.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    # Survey question sheets
+    for survey in program_data.get("surveys", []):
+        ws = wb.create_sheet(title=survey.get("name", "Survey"))
+        _write_header_row(ws, QUESTION_COLUMNS)
+        for q in survey.get("questions", []):
+            ws.append([q.get(col, "") for col in QUESTION_COLUMNS])
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
+
+    # Registry sheets
+    registry = program_data.get("registry")
+    if registry:
+        reg_kv = registry.get("kv", {})
+
+        ws_reg = wb.create_sheet(title="Registry")
+        for key, val in reg_kv.items():
+            ws_reg.append([key, val])
+        ws_reg.append([])
+        _write_header_row(ws_reg, ["code", "name", "color", "visibilityStatus"])
+        for status in registry.get("statuses", []):
+            ws_reg.append([
+                status.get("code", ""),
+                status.get("name", ""),
+                status.get("color", ""),
+                status.get("visibilityStatus", "current"),
+            ])
+        for col in ws_reg.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+            ws_reg.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+        if registry.get("conditions"):
+            ws_cond = wb.create_sheet(title="Registry Conditions")
+            _write_header_row(ws_cond, ["code", "name", "visibilityStatus"])
+            for cond in registry["conditions"]:
+                ws_cond.append([
+                    cond.get("code", ""),
+                    cond.get("name", ""),
+                    cond.get("visibilityStatus", "current"),
+                ])
+            for col in ws_cond.columns:
+                max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+                ws_cond.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+        if registry.get("condition_categories"):
+            ws_cat = wb.create_sheet(title="Registry Condition Categories")
+            _write_header_row(ws_cat, ["code", "name", "visibilityStatus"])
+            for cat in registry["condition_categories"]:
+                ws_cat.append([
+                    cat.get("code", ""),
+                    cat.get("name", ""),
+                    cat.get("visibilityStatus", "current"),
+                ])
+            for col in ws_cat.columns:
+                max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+                ws_cat.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def generate_xlsx(program: ProgramDefinition) -> bytes:
     """Convert a ProgramDefinition into XLSX bytes ready for download."""
     wb = openpyxl.Workbook()

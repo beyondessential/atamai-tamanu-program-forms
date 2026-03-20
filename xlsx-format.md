@@ -183,6 +183,17 @@ Rows without a `code` value are skipped.
 ```json
 { "mandatory": true }
 { "mandatory": true, "min": 0, "max": 300 }
+{ "mandatory": true, "min": 0, "max": 300, "normalRange": { "min": 60, "max": 100 } }
+```
+
+`normalRange` is valid on `Number`, `CalculatedQuestion`, and `Result` questions. It defines the reference/normal range displayed as a highlight in charts. Can also be an array for age-banded ranges:
+
+```json
+{
+  "normalRange": [
+    { "min": 60, "max": 100, "ageUnit": "years", "ageMin": 18, "ageMax": 65 }
+  ]
+}
 ```
 
 ### Config (PatientData)

@@ -1,8 +1,8 @@
 """
-Atamai - Tamanu Program & Registry Builder
+Atamai — Tamanu Assistant
 
-A conversational assistant that helps implementers build Tamanu program
-form and registry XLSX files for import via the program importer.
+Multi-skill AI assistant for Tamanu implementers. The AI automatically determines
+which skill to use from the conversation — no explicit tool switching required.
 """
 
 import base64
@@ -14,154 +14,249 @@ from dotenv import load_dotenv
 from pypdf import PdfReader
 
 from baml_client.sync_client import b
-from xlsx_generator import generate_xlsx
+from baml_client.types import Skill
 from xlsx_parser import parse_xlsx
+from skills import program_builder, lab_builder, questions
 
 load_dotenv()
 
+_ALL_SKILLS = [program_builder, lab_builder, questions]
+_SKILL_MAP: dict[str, object] = {s.TITLE: s for s in _ALL_SKILLS}
+_BAML_SKILL_MAP: dict[Skill, object] = {
+    Skill.ProgramBuilder: program_builder,
+    Skill.LabBuilder: lab_builder,
+    Skill.Questions: questions,
+}
+
 st.set_page_config(
-    page_title="Tamanu Program & Registry Builder",
+    page_title="Atamai — Tamanu",
     page_icon="🏥",
     layout="centered",
 )
 
-st.title("Tamanu Program & Registry Builder")
-st.caption("Describe the program form you need and I'll help you build it.")
-
-# ── Session state ─────────────────────────────────────────────────────────────
+# ── Session state ──────────────────────────────────────────────────────────────
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "xlsx_data" not in st.session_state:
-    st.session_state.xlsx_data = None
-
-if "program_name" not in st.session_state:
-    st.session_state.program_name = "survey"
-
 if "upload_context" not in st.session_state:
     st.session_state.upload_context = None
 
-if "uploaded_filename" not in st.session_state:
-    st.session_state.uploaded_filename = None
+if "upload_program_data" not in st.session_state:
+    st.session_state.upload_program_data = None
 
-# ── Sidebar — file upload ──────────────────────────────────────────────────────
+if "uploaded_filenames" not in st.session_state:
+    st.session_state.uploaded_filenames = set()
+
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = 0
+
+if "active_skill" not in st.session_state:
+    st.session_state.active_skill = None
+
+# Initialise all skill states
+for _skill in _ALL_SKILLS:
+    _skill.init_state()
+
+# ── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.subheader("Attach a file")
-    st.caption("Upload an existing program XLSX to modify, or an image of a paper form to base your form on.")
+    st.title("Atamai")
 
-    uploaded_file = st.file_uploader(
-        "file",
-        type=["xlsx", "pdf", "png", "jpg", "jpeg", "webp"],
-        label_visibility="collapsed",
+    if st.session_state.active_skill:
+        active = _SKILL_MAP.get(st.session_state.active_skill)
+        if active:
+            st.caption(f"Active: {active.ICON} {active.TITLE}")
+            st.divider()
+            active.render_sidebar()
+            st.divider()
+
+    st.subheader("Attach files")
+    st.caption(
+        "Upload existing program or lab XLSXs to modify, CSV data, PDF specs, "
+        "or images of paper forms."
     )
 
-    if uploaded_file and uploaded_file.name != st.session_state.uploaded_filename:
-        file_bytes = uploaded_file.read()
-        ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
+    uploaded_files = st.file_uploader(
+        "files",
+        type=["xlsx", "csv", "pdf", "png", "jpg", "jpeg", "webp"],
+        label_visibility="collapsed",
+        accept_multiple_files=True,
+        key=f"file_uploader_{st.session_state.file_uploader_key}",
+    )
 
-        if ext == "xlsx":
-            with st.spinner("Parsing XLSX..."):
-                summary, errors = parse_xlsx(file_bytes)
-            for err in errors:
-                st.warning(err)
-            if summary:
-                st.session_state.upload_context = summary
-                st.session_state.uploaded_filename = uploaded_file.name
-                st.session_state.messages = []
-                st.rerun()
-        elif ext == "pdf":
-            reader = PdfReader(BytesIO(file_bytes))
-            pages_text = []
-            for i, page in enumerate(reader.pages, 1):
-                text = page.extract_text()
-                if text and text.strip():
-                    pages_text.append(f"[Page {i}]\n{text.strip()}")
-            if not pages_text:
-                st.warning("Could not extract text from this PDF. It may be a scanned document — try uploading it as an image instead.")
+    current_names = {f.name for f in (uploaded_files or [])}
+    if current_names != st.session_state.uploaded_filenames:
+        contexts = []
+        st.session_state.upload_program_data = None
+
+        for uploaded_file in (uploaded_files or []):
+            file_bytes = uploaded_file.read()
+            ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
+
+            if ext == "xlsx":
+                with st.spinner(f"Parsing {uploaded_file.name}..."):
+                    summary, program_data, errors = parse_xlsx(file_bytes)
+                for err in errors:
+                    st.warning(err)
+                if summary:
+                    contexts.append(summary)
+                if program_data and st.session_state.upload_program_data is None:
+                    st.session_state.upload_program_data = program_data
+
+            elif ext == "csv":
+                text = file_bytes.decode("utf-8", errors="replace")
+                contexts.append(f"[CSV FILE: {uploaded_file.name}]\n{text}")
+
+            elif ext == "pdf":
+                reader = PdfReader(BytesIO(file_bytes))
+                pages_text = []
+                for i, page in enumerate(reader.pages, 1):
+                    text = page.extract_text()
+                    if text and text.strip():
+                        pages_text.append(f"[Page {i}]\n{text.strip()}")
+                if not pages_text:
+                    st.warning(
+                        f"Could not extract text from {uploaded_file.name}. "
+                        "It may be a scanned document — try uploading it as an image instead."
+                    )
+                else:
+                    contexts.append("[PDF DOCUMENT LOADED]\n\n" + "\n\n".join(pages_text))
+
             else:
-                st.session_state.upload_context = "[PDF DOCUMENT LOADED]\n\n" + "\n\n".join(pages_text)
-                st.session_state.uploaded_filename = uploaded_file.name
-                st.session_state.messages = []
-                st.rerun()
-        else:
-            mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
-            with st.spinner("Interpreting image..."):
-                baml_image = BamlImage.from_base64(mime, base64.b64encode(file_bytes).decode())
-                description = b.InterpretFormImage(baml_image)
-            st.session_state.upload_context = f"[FORM IMAGE INTERPRETED]\n{description}"
-            st.session_state.uploaded_filename = uploaded_file.name
-            st.session_state.messages = []
-            st.rerun()
+                mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
+                with st.spinner(f"Interpreting {uploaded_file.name}..."):
+                    baml_image = BamlImage.from_base64(
+                        mime, base64.b64encode(file_bytes).decode()
+                    )
+                    description = b.InterpretFormImage(baml_image)
+                contexts.append(f"[FORM IMAGE INTERPRETED]\n{description}")
+
+        st.session_state.upload_context = "\n\n".join(contexts) if contexts else None
+        st.session_state.uploaded_filenames = current_names
+        st.rerun()
 
     if st.session_state.upload_context:
-        st.success(f"Loaded: {st.session_state.uploaded_filename}")
-        if st.button("Clear attachment", use_container_width=True):
+        for name in sorted(st.session_state.uploaded_filenames):
+            st.success(f"Loaded: {name}")
+        if st.button("Clear attachments", use_container_width=True):
             st.session_state.upload_context = None
-            st.session_state.uploaded_filename = None
+            st.session_state.upload_program_data = None
+            st.session_state.uploaded_filenames = set()
+            st.session_state.file_uploader_key += 1
             st.rerun()
 
-# ── Chat history ──────────────────────────────────────────────────────────────
+# ── Main area ──────────────────────────────────────────────────────────────────
 
+st.title("🏥 Atamai — Tamanu")
+st.caption("Your Tamanu assistant — describe what you need and I'll figure out how to help.")
+
+# Chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# ── Download section (shown at bottom of conversation once XLSX is ready) ─────
+# Active skill outputs (download buttons, etc.)
+if st.session_state.active_skill:
+    active = _SKILL_MAP.get(st.session_state.active_skill)
+    if active:
+        active.render_outputs()
 
-if st.session_state.xlsx_data:
-    st.success("Your XLSX is ready to download.")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.download_button(
-            label="⬇️  Download survey XLSX",
-            data=st.session_state.xlsx_data,
-            file_name=f"{st.session_state.program_name}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    with col2:
-        if st.button("Start new survey", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.xlsx_data = None
-            st.session_state.program_name = "survey"
-            st.session_state.upload_context = None
-            st.session_state.uploaded_filename = None
-            st.rerun()
+# ── Slash command helpers ──────────────────────────────────────────────────────
 
-# ── Chat input ────────────────────────────────────────────────────────────────
+_SLASH_COMMANDS: dict[str, str] = {
+    "program": program_builder.TITLE,
+    "program_builder": program_builder.TITLE,
+    "lab": lab_builder.TITLE,
+    "lab_builder": lab_builder.TITLE,
+    "q": questions.TITLE,
+    "question": questions.TITLE,
+}
 
-if user_input := st.chat_input("Describe your program, surveys, or registry..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.write(user_input)
 
-    # Format conversation history for BAML, prepending any upload context
-    conversation_history = "\n".join(
+def _parse_slash(text: str) -> tuple[str | None, str]:
+    """Return (skill_title, remaining_text) if text is a slash command, else (None, text)."""
+    if not text.startswith("/"):
+        return None, text
+    parts = text[1:].split(None, 1)
+    cmd = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else ""
+    return _SLASH_COMMANDS.get(cmd), rest
+
+
+def _build_history() -> str:
+    history = "\n".join(
         f"{m['role'].upper()}: {m['content']}"
         for m in st.session_state.messages
     )
     if st.session_state.upload_context:
-        conversation_history = st.session_state.upload_context + "\n\n" + conversation_history
+        history = st.session_state.upload_context + "\n\n" + history
+    return history
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            result = b.ProcessMessage(conversation_history)
 
-        st.write(result.message)
-        st.session_state.messages.append({"role": "assistant", "content": result.message})
+# ── Chat input ─────────────────────────────────────────────────────────────────
 
-        if result.ready_to_generate:
-            try:
-                with st.spinner("Generating survey definition..."):
-                    program = b.BuildSurveyDefinition(conversation_history)
+_skill_cmds = "  ·  ".join(f"`/{cmd}`" for cmd in ["program", "lab", "q"])
+st.caption(f"Tip: use {_skill_cmds} to switch tools directly.")
 
-                with st.spinner("Building XLSX..."):
-                    xlsx_bytes = generate_xlsx(program)
+if user_input := st.chat_input("Ask me anything about Tamanu..."):
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
 
-                st.session_state.xlsx_data = xlsx_bytes
-                st.session_state.program_name = program.program_code.lower()
+    slash_title, remaining = _parse_slash(user_input)
+
+    if slash_title is not None:
+        # ── Explicit skill switch via slash command ─────────────────────────────
+        skill = _SKILL_MAP.get(slash_title)
+        if skill is None:
+            available = ", ".join(f"`/{c}`" for c in _SLASH_COMMANDS)
+            msg = f"Unknown command. Available: {available}"
+            with st.chat_message("assistant"):
+                st.write(msg)
+            st.session_state.messages.append({"role": "assistant", "content": msg})
+        else:
+            st.session_state.active_skill = skill.TITLE
+            if remaining:
+                skill.handle_message(remaining, _build_history())
+            else:
+                confirm = f"Switched to {skill.ICON} **{skill.TITLE}**. How can I help?"
+                with st.chat_message("assistant"):
+                    st.write(confirm)
+                st.session_state.messages.append({"role": "assistant", "content": confirm})
                 st.rerun()
-            except Exception as e:
-                st.error(f"Failed to generate XLSX: {e}")
+
+    else:
+        # ── Auto-route via AI (only when no skill is active yet) ───────────────
+        if st.session_state.active_skill:
+            skill = _SKILL_MAP[st.session_state.active_skill]
+        else:
+            try:
+                with st.spinner("Thinking..."):
+                    route = b.RouteMessage(user_input)
+            except Exception:
+                msg = "Sorry, I'm having trouble connecting right now. Please try again in a moment."
+                with st.chat_message("assistant"):
+                    st.write(msg)
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                st.stop()
+
+            if route.skill == Skill.OffTopic:
+                available = ", ".join(f"`/{c}`" for c in ["program", "lab", "q"])
+                refusal = (
+                    "I can only help with Tamanu-related tasks — "
+                    "building program forms, lab reference data, or answering Tamanu questions. "
+                    f"Is there something Tamanu-related I can help with? "
+                    f"(You can also switch tools directly with {available}.)"
+                )
+                with st.chat_message("assistant"):
+                    st.write(refusal)
+                st.session_state.messages.append({"role": "assistant", "content": refusal})
+                skill = None
+
+            else:
+                skill = _BAML_SKILL_MAP[route.skill]
+                st.session_state.active_skill = skill.TITLE
+
+        if skill is not None:
+            skill.handle_message(user_input, _build_history())

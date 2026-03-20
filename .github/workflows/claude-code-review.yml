@@ -2,13 +2,12 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
   issue_comment:
     types: [created]
 
 jobs:
   claude-review:
-    runs-on: ubuntu-latest
     if: >-
       github.event_name == 'pull_request' ||
         (github.event_name == 'issue_comment' &&
@@ -16,53 +15,5 @@ jobs:
         contains(github.event.comment.body, '/review') &&
         github.event.comment.author_association != 'NONE' &&
         github.event.comment.author_association != 'FIRST_TIME_CONTRIBUTOR')
-    concurrency:
-      group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: true
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: read
-      id-token: write
-      actions: read
-
-    steps:
-      - name: Resolve PR metadata
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
-          PR_SHA=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq '.head.sha')
-          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.sha }}
-          fetch-depth: 0
-
-      - name: Run Claude Code Review
-        id: claude-review
-        uses: anthropics/claude-code-action@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: true
-          use_sticky_comment: true
-          prompt: "/review"
-          claude_args: |
-            --allowedTools "Read,Grep,Glob,Bash(gh pr *),Bash(gh api*),Bash(git diff*),Bash(git log*)"
-            --append-system-prompt "Focus on potential bugs, BAML type correctness, XLSX output compatibility with the Tamanu program importer, and security. Keep the sticky summary comment brief: just the overall verdict, sign-off (✅ approved or ⚠️ issues found), and the regression testing checklist. All specific feedback belongs in inline comments — do not repeat issue details in the summary.
-
-            BLOCK and request immediate changes if any of the following are found:
-            - Hardcoded credentials, API keys, passwords, or tokens
-            - Committed .env or secrets files
-            - baml_client/ committed to the repository (it is auto-generated and gitignored)
-
-            PR TITLE: Review the current PR title. If it is vague or auto-generated, update it using: gh pr edit ${{ steps.pr.outputs.number }} --title 'improved title here'
-
-            REGRESSION TESTING: Include in the summary a checklist of what needs testing. For BAML changes: regenerate bindings and verify the app runs. For xlsx_generator.py changes: verify output imports successfully into a Tamanu dev instance. List only what needs to be tested — no explanations.
-
-            INLINE COMMENTS: Post all specific code feedback as inline review comments on the relevant lines — not in the summary. Use: gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/comments --method POST --field body='your comment' --field commit_id='${{ github.event.pull_request.head.sha || steps.pr.outputs.sha }}' --field path='relative/file/path' --field line=LINE_NUMBER --field side='RIGHT'."
+    uses: beyondessential/maui-team/.github/workflows/claude-code-review.yml@main
+    secrets: inherit

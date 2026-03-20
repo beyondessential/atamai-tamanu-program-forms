@@ -1,16 +1,20 @@
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 dist/
-*.egg-info/
-
-# BAML - auto-generated, do not commit
-baml_client/
 
 # Environment
 .env
 
+# BAML — auto-generated, do not commit
+baml_client/
+
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code
+.claude/
+CLAUDE.md
